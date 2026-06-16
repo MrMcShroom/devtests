@@ -5770,30 +5770,34 @@ class sdEntity
 	{
 		if ( arr.length <= 0 )
 		return;
-	
-		// Partial removal approach
-		let t = force_all ? 0 : Date.now();
-		let t2 = t;
-		
-		let pos = 0;
-		
-		let at_least = force_all ? arr.length : Math.ceil( arr.length * 0.01 );
-		
-		while ( pos < arr.length && ( t2 - t < 1 || pos < at_least ) )
+
+		// Single-pass, order-preserving compaction.
+		// Previously this did sdEntity.entities.lastIndexOf()+splice() per entry => O(M*N)
+		// against the full global entities array, throttled to ~1%/1ms per frame which left a
+		// growing backlog under heavy churn. CPU profiling showed it as the #1 server hotspot
+		// (~13.5% of total / ~33% of non-idle with a single player). sdEntity.entities is only
+		// a registry (random pick / net_id lookup / snapshot enumeration) and is NOT iterated for
+		// simulation (the think loop uses active_entities/global_entities), so order and the exact
+		// frame of array removal are not behavior-significant for already-_is_being_removed entities.
+		// force_all is now irrelevant (everything in arr is removed in this one pass) but kept for
+		// call-site compatibility.
+		const remove_set = ( arr.length > 1 ) ? new Set( arr ) : null;
+		const src = sdEntity.entities;
+		let w = 0;
+		for ( let r = 0; r < src.length; r++ )
 		{
-			let id = sdEntity.entities.lastIndexOf( arr[ pos ] );
-			if ( id !== -1 )
-			sdEntity.entities.splice( id, 1 );
-
-            pos++;
-
-			t2 = force_all ? 0 : Date.now();
+			const e = src[ r ];
+			const drop = remove_set ? remove_set.has( e ) : ( e === arr[ 0 ] );
+			if ( !drop )
+			{
+				if ( w !== r )
+				src[ w ] = e;
+				w++;
+			}
 		}
-		
-		if ( pos === arr.length )
+		src.length = w;
+
 		arr.length = 0;
-		else
-		arr.splice( 0, pos );
 	}
 	
 	
