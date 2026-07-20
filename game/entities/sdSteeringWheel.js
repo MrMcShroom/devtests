@@ -1440,6 +1440,16 @@ class sdSteeringWheel extends sdEntity
 
 		if ( will_move || forceful )
 		{
+			// Snapshot pre-move positions so the final combined-configuration check below (which can
+			// still find scan and stuff_to_push entities wedged into each other despite each having
+			// individually passed its own probe above) can cleanly roll everything back instead of
+			// committing an invalid overlapping configuration.
+			let pre_move_positions = new Map();
+			for ( let i = 0; i < scan.length; i++ )
+			pre_move_positions.set( scan[ i ], { x: scan[ i ].x, y: scan[ i ].y } );
+			for ( let i = 0; i < stuff_to_push.length; i++ )
+			pre_move_positions.set( stuff_to_push[ i ], { x: stuff_to_push[ i ].x, y: stuff_to_push[ i ].y } );
+
 			for ( let i = 0; i < scan.length; i++ )
 			{
 				let current = scan[ i ];
@@ -1528,7 +1538,42 @@ class sdSteeringWheel extends sdEntity
 				else
 				item.ApplyStatusEffect({ type: sdStatusEffect.TYPE_STEERING_WHEEL_MOVEMENT_SMOOTH, tx:item.x, ty:item.y });
 			}
-			
+
+			// Final revalidation of the combined configuration: each entity above only checked itself
+			// against the world *before* anything moved, exempting other scan/stuff_to_push members on
+			// the assumption they would also get out of the way - but two of them can independently end
+			// up with incompatible (e.g. differing partial-axis) resolutions and still collide with each
+			// other once actually moved. Roll back everything if that happened instead of leaving an
+			// entity wedged into a seam between blocks.
+			let wedged_after_move = false;
+
+			for ( let i = 0; i < scan.length && !wedged_after_move; i++ )
+			{
+				let current = scan[ i ];
+				if ( !current.CanMoveWithoutOverlap( current.x, current.y, 0, null, GetIgnoredEntityClassesFor( current ) ) )
+				wedged_after_move = true;
+			}
+			for ( let i = 0; i < stuff_to_push.length && !wedged_after_move; i++ )
+			{
+				let current = stuff_to_push[ i ];
+				if ( !current.CanMoveWithoutOverlap( current.x, current.y, 0, null, GetIgnoredEntityClassesFor( current ) ) )
+				wedged_after_move = true;
+			}
+
+			if ( wedged_after_move )
+			{
+				for ( let [ ent, pos ] of pre_move_positions )
+				{
+					ent.x = pos.x;
+					ent.y = pos.y;
+					sdWorld.UpdateHashPosition( ent, false, false );
+					ent._last_x = ent.x;
+					ent._last_y = ent.y;
+				}
+
+				return false;
+			}
+
 			// Call movement in range for everything together, or else motors won't trigger any switches
 			for ( let i = 0; i < scan.length; i++ )
 			{
